@@ -1,0 +1,20 @@
+<?php
+declare(strict_types=1);
+if(PHP_SAPI!=='cli')exit(1);
+umask(0077);
+$c=require dirname(__DIR__).'/config.php';
+foreach(['pdo_sqlite','curl','fileinfo'] as $extension)if(!extension_loaded($extension))throw new RuntimeException('Missing extension: '.$extension);
+foreach(['','/images','/sessions','/backups'] as $dir)if(!is_dir($c['data_dir'].$dir))mkdir($c['data_dir'].$dir,0700,true);
+$file=$c['data_dir'].'/app.sqlite';
+if(is_file($file))exit("Database already exists; not modified.\n");
+$db=new PDO('sqlite:'.$file);
+$db->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
+$db->exec('PRAGMA foreign_keys=ON');
+$db->beginTransaction();
+$db->exec(file_get_contents(dirname(__DIR__).'/schema.sql'));
+$db->commit();
+chmod($file,0600);
+echo "Initialized.\n";
+require_once dirname(__DIR__).'/src/core.php';
+require_once dirname(__DIR__).'/src/guest.php';
+migrateIdentity($db);

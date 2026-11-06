@@ -1,0 +1,27 @@
+name: Deploy to Sakura
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sakura-production
+  cancel-in-progress: false
+jobs:
+  test:
+    uses: ./.github/workflows/check.yml
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Deploy tested source
+        env:
+          DEPLOY_HOST: ${{ vars.SAKURA_HOST }}
+          DEPLOY_USER: ${{ vars.SAKURA_USER }}
+          DEPLOY_PUBLIC: ${{ vars.SAKURA_PUBLIC_DIR }}
+          DEPLOY_PRIVATE: ${{ vars.SAKURA_PRIVATE_DIR }}
+          DEPLOY_PHP: ${{ vars.SAKURA_PHP }}
+          DEPLOY_KEY: ${{ secrets.SAKURA_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.SAKURA_KNOWN_HOSTS }}
+        run: bash deploy/upload.sh

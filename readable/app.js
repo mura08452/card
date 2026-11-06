@@ -1,0 +1,894 @@
+(() => {
+  if (window.__trailCardAppLoaded) return;
+  window.__trailCardAppLoaded = true;
+  const $ = (s) => document.querySelector(s),
+    esc = (s) =>
+      String(s ?? "").replace(
+        /[&<>"']/g,
+        (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+      );
+  const BASE = new URL(".", document.currentScript.src).pathname;
+  const STORAGE = "trail-card:" + BASE + ":",
+    CACHE_PREFIX = "trail-card-php:" + BASE + ":";
+  const initial = {
+    me: {
+      name: "",
+      intro: "",
+      genres: "",
+      links: "",
+      videos: "",
+      icon: "",
+      image: "",
+      template: "forest",
+      cardMode: "template",
+    },
+    contacts: [],
+    event: "",
+    autoGPS: false,
+  };
+  let owner = localStorage.getItem(STORAGE + "owner-id") || "",
+    data = structuredClone(initial),
+    revision = 0,
+    dirty = false,
+    ready = false,
+    conflict = false,
+    syncTimer = null,
+    syncing = false,
+    changeVersion = 0,
+    page = "home",
+    ticket = null,
+    scannerStream = null;
+  function key() {
+    return STORAGE + "account-" + owner;
+  }
+  function loadLocal() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key()));
+      if (saved) {
+        data = saved.data;
+        revision = saved.revision;
+        dirty = saved.dirty;
+      }
+    } catch {
+      toast("端末の保存データを読み込めませんでした");
+    }
+  }
+  if (owner) loadLocal();
+  function persist() {
+    try {
+      localStorage.setItem(key(), JSON.stringify({ data, revision, dirty }));
+      return true;
+    } catch {
+      toast("端末に保存できませんでした。画像の容量を減らしてください。");
+      return false;
+    }
+  }
+  function save() {
+    if (!owner) return (toast("通信できる場所でログインを確認してください"), false);
+    dirty = true;
+    changeVersion++;
+    let ok = persist();
+    network();
+    if (ok) {
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(sync, 700);
+    }
+    return ok;
+  }
+  function toast(t) {
+    $("#toast").className = "toast";
+    $("#toast").textContent = t;
+    setTimeout(() => {
+      $("#toast").className = "";
+      $("#toast").textContent = "";
+    }, 4500);
+  }
+  let csrf = "",
+    authInfo = { providers: [], linked: [] };
+  async function api(path, method = "GET", body) {
+    const r = await fetch(BASE + "api/" + path, {
+      method,
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: body ? { "Content-Type": "application/json", "X-CSRF-Token": csrf } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let v;
+    try {
+      v = await r.json();
+    } catch {
+      throw Error("サーバーに接続できません");
+    }
+    if (r.status === 401) {
+      ready = false;
+      showLogin();
+    }
+    if (!r.ok) {
+      const e = Error(v.message || "通信に失敗しました");
+      e.status = r.status;
+      throw e;
+    }
+    return v;
+  }
+  function network() {
+    $("#network").textContent = !navigator.onLine
+      ? "○ オフライン · 端末保存"
+      : conflict
+        ? "更新の競合あり"
+        : dirty
+          ? "● 端末保存済み · 同期待ち"
+          : ready
+            ? "● 同期済み"
+            : "接続を確認中";
+  }
+  async function initialize() {
+    try {
+      const session = await api("session");
+      csrf = session.csrf;
+      authInfo = session;
+      if (!session.authenticated) {
+        ready = false;
+        showLogin(session.providers);
+        return;
+      }
+      const server = await api("state");
+      if (owner !== server.id) {
+        if ("caches" in window) {
+          const names = await caches.keys();
+          await Promise.all(
+            names
+              .filter((n) => n.startsWith(CACHE_PREFIX + "images-"))
+              .map((n) => caches.delete(n)),
+          );
+        }
+        owner = server.id;
+        localStorage.setItem(STORAGE + "owner-id", owner);
+        data = structuredClone(initial);
+        revision = server.revision;
+        dirty = false;
+        loadLocal();
+      }
+      ready = true;
+      $("#modal").oncancel = null;
+      if ($("#modal").open) $("#modal").close();
+      if (dirty) {
+        await sync();
+      } else {
+        data = server.state;
+        revision = server.revision;
+        persist();
+      }
+      network();
+      render();
+      const token = new URL(location.href).searchParams.get("exchange");
+      if (token) {
+        page = "exchange";
+        render();
+        showScanConfirmation(token);
+      }
+    } catch (e) {
+      network();
+      if (navigator.onLine) {
+        $("#network").textContent = "ログイン・接続を確認してください";
+        toast(e.message);
+      }
+    }
+  }
+  function showLogin() {
+    toast("接続を確認して再読み込みしてください。Cookieを許可する必要があります。");
+  }
+  function accountPanel() {
+    return `<h2>アカウント・引き継ぎ</h2><p>${authInfo.linked.length ? "連携済み：" + authInfo.linked.map((p) => (p === "legacy" ? "外部アカウント" : p === "google" ? "Google" : "X")).join("・") : "未連携（この端末で利用中）"}</p><p class="note">未連携のままCookieが消えると、名刺や記録に戻れなくなります。</p>${authInfo.providers.map((p) => `<button type="button" data-auth="${p}" data-mode="link">${p === "google" ? "Google" : "X"}と連携</button> <button type="button" data-auth="${p}" data-mode="recover">${p === "google" ? "Google" : "X"}で以前のアカウントを使う</button>`).join("")}${authInfo.providers.length ? "" : '<p class="note">外部アカウント連携は準備中です。名刺の作成・交換は利用できます。</p>'}<button type="button" id="logout">この端末からログアウト</button>`;
+  }
+  async function beginAuth(provider, mode) {
+    await sync();
+    if (dirty) return toast("未同期の変更があります。同期または書き出しを行ってください。");
+    if (
+      mode === "recover" &&
+      !confirm(
+        "以前のアカウントへ切り替えます。今の名刺・記録は統合されません。未連携のアカウントには戻れなくなる場合があります。続けますか？",
+      )
+    )
+      return;
+    const session = await api("session");
+    csrf = session.csrf;
+    const url = new URL(BASE + "auth/login", location.origin);
+    url.searchParams.set("provider", provider);
+    url.searchParams.set("mode", mode);
+    url.searchParams.set("csrf", csrf);
+    const exchange = new URL(location.href).searchParams.get("exchange");
+    if (exchange) url.searchParams.set("exchange", exchange);
+    location.assign(url.href);
+  }
+  function suggestLink() {
+    if (authInfo.linked.length || localStorage.getItem(STORAGE + "link-hint:" + owner)) return;
+    localStorage.setItem(STORAGE + "link-hint:" + owner, "1");
+    const d = $("#modal");
+    d.innerHTML =
+      '<h2>データの引き継ぎ</h2><p>GoogleやXと連携すると、別の端末やCookieが消えた後も利用できます。</p><button id="link-settings">設定を開く</button> <button id="link-later">あとで</button>';
+    d.showModal();
+    $("#link-settings").onclick = () => {
+      d.close();
+      go("settings");
+    };
+    $("#link-later").onclick = () => d.close();
+  }
+  async function logout() {
+    if (
+      !authInfo.linked.length &&
+      !confirm("未連携のため、ログアウトするとこの名刺と記録には原則戻れません。続けますか？")
+    )
+      return;
+    if (
+      dirty &&
+      !confirm(
+        "未同期の変更があります。先に書き出すか同期してください。このままログアウトすると端末のデータは削除されます。続けますか？",
+      )
+    )
+      return;
+    try {
+      const r = await fetch(BASE + "auth/logout", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf },
+      });
+      if (!r.ok) throw Error("ログアウトできませんでした");
+      clearTimeout(syncTimer);
+      ready = false;
+      dirty = false;
+      ticket = null;
+      stopScanner();
+      for (const k of Object.keys(localStorage))
+        if (k.startsWith(STORAGE)) localStorage.removeItem(k);
+      if ("caches" in window)
+        for (const k of await caches.keys()) if (k.startsWith(CACHE_PREFIX)) await caches.delete(k);
+      location.replace(BASE);
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+  async function sync() {
+    if (!ready || !dirty || syncing || conflict || !navigator.onLine || !data.me.name) return;
+    syncing = true;
+    const version = changeVersion;
+    try {
+      const identity = await api("state");
+      if (identity.id !== owner) {
+        ready = false;
+        throw Error("ログイン中のアカウントが変わりました。再読み込みしてください");
+      }
+      const result = await api("state", "PUT", { revision, state: data });
+      revision = result.revision;
+      if (version === changeVersion) {
+        dirty = false;
+        data.me = result.profile;
+      }
+      persist();
+      network();
+    } catch (e) {
+      if (e.status === 409) conflict = true;
+      network();
+      toast(e.message);
+    } finally {
+      syncing = false;
+      if (dirty && !conflict && changeVersion !== version) setTimeout(sync, 700);
+    }
+  }
+  async function refresh() {
+    if (dirty) {
+      await sync();
+      if (dirty) return;
+    }
+    const s = await api("state");
+    if (s.id !== owner) throw Error("アカウントが変わりました。再読み込みしてください");
+    data = s.state;
+    revision = s.revision;
+    persist();
+    network();
+  }
+  addEventListener("online", () => {
+    network();
+    initialize();
+  });
+  addEventListener("offline", network);
+  network();
+  function avatar(c) {
+    return c.icon
+      ? `<img class="avatar" src="${esc(c.icon)}" alt="">`
+      : `<div class="avatar">${esc(c.emoji || "♧")}</div>`;
+  }
+  function card(c, sample = false) {
+    let h = c.history?.at(-1);
+    return `<button class="card" data-contact="${esc(c.id)}" ${sample ? 'data-sample="1"' : ""}><div class="cover"></div><div class="body">${avatar(c)}<div class="name">${esc(c.name)}</div><div>${(
+      c.genres || ""
+    )
+      .split(",")
+      .filter(Boolean)
+      .map((g) => `<span class="tag">${esc(g)}</span>`)
+      .join(
+        "",
+      )}</div><div class="desc">${esc(c.intro)}</div><div class="met">${sample ? "サンプル名刺" : h ? `${esc(h.date)}　${esc(h.place || "場所未設定")}` : "会った記録はまだありません"}</div></div></button>`;
+  }
+  const cardTemplates = { forest: "フォレスト", ridge: "リッジ", simple: "シンプル" };
+  function cardDesign(c) {
+    if (c.cardMode !== "template" && c.image)
+      return `<img class="home-card-image" src="${esc(c.image)}" alt="${esc(c.name)}の名刺">`;
+    const theme = Object.hasOwn(cardTemplates, c.template) ? c.template : "forest";
+    return `<section class="designed-card template-${theme}" aria-label="${esc(cardTemplates[theme])}の名刺"><div class="design-landscape" aria-hidden="true"></div><div class="design-content">${c.icon ? `<img src="${esc(c.icon)}" alt="" class="design-icon">` : ""}<h2>${esc(c.name || "ハンドルネーム")}</h2>${
+      c.genres
+        ? `<div class="design-tags">${c.genres
+            .split(",")
+            .filter(Boolean)
+            .map((g) => `<span>${esc(g.trim())}</span>`)
+            .join("")}</div>`
+        : ""
+    }${c.intro ? `<p>${esc(c.intro)}</p>` : ""}</div></section>`;
+  }
+  function render() {
+    document
+      .querySelectorAll("nav button")
+      .forEach((b) => b.classList.toggle("active", b.dataset.view === page));
+    let v = $("#view");
+    document.body.classList.toggle("home-page", page === "home");
+    if (page === "home") {
+      v.innerHTML = `<div class="home-content">${!data.me.name ? '<div class="empty"><p>名刺が未登録です。</p><a href="#mine" id="register-card">名刺を登録する</a></div>' : cardDesign(data.me)}${data.me.name ? '<div class="exchange-qr"><canvas id="exchange-code" aria-label="名刺交換用QRコード"></canvas><p class="note" id="qr-status">交換用QRコードを取得中…</p><button id="renew-qr">QRを更新</button></div>' : ""}</div>`;
+      if ($("#exchange-code")) {
+        drawTicket();
+        $("#renew-qr").onclick = () => {
+          ticket = null;
+          drawTicket();
+        };
+      }
+      if ($("#register-card"))
+        $("#register-card").onclick = (e) => {
+          e.preventDefault();
+          go("mine");
+        };
+    }
+    if (page === "book") {
+      v.innerHTML = `<div class="row"><div><h1>名刺帳</h1></div><button class="primary" id="goexchange">＋ 交換する</button></div><div class="bar"><input id="search" placeholder="名前・ジャンル・イベント・メモで検索" aria-label="名刺を検索"><select id="sort" aria-label="並び順"><option value="recent">最近会った順</option><option value="name">名前順</option></select></div><div id="results"></div>`;
+      $("#goexchange").onclick = () => go("exchange");
+      $("#search").oninput = results;
+      $("#sort").onchange = results;
+      results();
+    }
+    if (page === "mine") {
+      v.innerHTML = `<h1>自分の名刺</h1><form id="profile" class="panel"><label>ハンドルネーム <span class="note">必須</span></label><input name="name" required maxlength="50" value="${esc(data.me.name)}"><label>活動紹介</label><textarea name="intro" maxlength="300">${esc(data.me.intro)}</textarea><label>活動ジャンル <span class="note">カンマ区切り</span></label><input name="genres" value="${esc(data.me.genres)}" placeholder="登山,キャンプ"><label>アイコン画像</label><input type="file" id="icon" accept="image/png,image/jpeg,image/webp"><label for="card-mode">名刺の表示方法</label><select name="cardMode" id="card-mode"><option value="template" ${data.me.cardMode === "template" || !data.me.image ? "selected" : ""}>テンプレートを使う</option><option value="upload" ${data.me.cardMode !== "template" && data.me.image ? "selected" : ""}>自分の名刺画像を使う</option></select><label for="card-template">デザインテンプレート</label><select name="template" id="card-template">${Object.entries(
+        cardTemplates,
+      )
+        .map(
+          ([id, label]) =>
+            `<option value="${id}" ${(data.me.template || "forest") === id ? "selected" : ""}>${label}</option>`,
+        )
+        .join(
+          "",
+        )}</select><label>プレビュー</label><div id="design-preview">${cardDesign(data.me)}</div><label>自由デザインの名刺画像</label><input type="file" id="image" accept="image/png,image/jpeg,image/webp">${data.me.image ? `<img class="fullimg" src="${esc(data.me.image)}" alt="現在の名刺画像">` : ""}<label>代表動画URL <span class="note">1行に1件</span></label><textarea name="videos">${esc(data.me.videos)}</textarea><label>各種リンク <span class="note">1行に1件</span></label><textarea name="links">${esc(data.me.links)}</textarea><div class="bar"><button class="primary">名刺を保存</button><button type="button" id="preview">プレビュー</button></div><p class="note">この版では公開URLは発行されません。</p></form>`;
+      $("#profile").onsubmit = async (e) => {
+        e.preventDefault();
+        let next = { ...data.me, ...Object.fromEntries(new FormData(e.target)) };
+        next.name = next.name.trim();
+        if (!next.name) return toast("名前を入力してください");
+        for (let k of ["videos", "links"])
+          if (next[k].split("\n").some((s) => s.trim() && !validURL(s.trim())))
+            return toast("リンクは https:// または http:// から入力してください");
+        for (let key of ["icon", "image"]) {
+          let f = $("#" + key).files[0];
+          if (f) {
+            if (f.size > 2e6) return toast("画像は各2MB以下にしてください");
+            next[key] = await readFile(f);
+          }
+        }
+        let old = data.me;
+        data.me = next;
+        if (!save()) data.me = old;
+        else {
+          toast("名刺を保存しました");
+          go("home");
+          suggestLink();
+        }
+      };
+      const draft = async () => {
+        const c = { ...data.me, ...Object.fromEntries(new FormData($("#profile"))) };
+        for (const key of ["icon", "image"]) {
+          const f = $("#" + key).files[0];
+          if (f && f.size <= 2e6) c[key] = await readFile(f);
+        }
+        return c;
+      };
+      let previewVersion = 0;
+      $("#profile").oninput = async () => {
+        const version = ++previewVersion;
+        const c = await draft();
+        if (version === previewVersion && $("#design-preview"))
+          $("#design-preview").innerHTML = cardDesign(c);
+      };
+      $("#preview").onclick = async () =>
+        detail({ ...(await draft()), id: "me", history: [] }, false, true);
+    }
+    if (page === "exchange") {
+      v.innerHTML = `<h1>名刺交換</h1><div class="panel"><h2>今日のイベント</h2><input id="event" value="${esc(data.event)}" placeholder="イベント名・山の名前など"></div><div class="panel"><h2>相手のQRコードを読み取る</h2><button id="start-scan" class="primary">カメラで読み取る</button><button id="stop-scan" hidden>カメラを停止</button><video id="scan-video" playsinline muted style="width:100%;max-width:400px;display:none"></video><p class="note">カメラを利用できない場合は交換用リンクを入力してください。</p><input id="exchange-link" placeholder="交換用リンク" aria-label="交換用リンク"><button id="send-link">相手を確認</button></div><div class="panel"><div class="row"><h2>交換申請</h2><button id="refresh-requests">更新</button></div><div id="requests">取得中…</div></div>`;
+      $("#event").onchange = (e) => {
+        data.event = e.target.value;
+        save();
+      };
+      $("#start-scan").onclick = startScanner;
+      $("#stop-scan").onclick = stopScanner;
+      $("#send-link").onclick = () => {
+        try {
+          const u = new URL($("#exchange-link").value);
+          if (u.origin !== location.origin || u.pathname !== BASE) throw Error();
+          const token = u.searchParams.get("exchange");
+          if (!token) throw Error();
+          showScanConfirmation(token);
+        } catch {
+          toast("このアプリの交換用リンクを入力してください");
+        }
+      };
+      $("#refresh-requests").onclick = loadRequests;
+      loadRequests();
+    }
+    if (page === "settings") {
+      v.innerHTML = `<h1>設定</h1><div class="panel"><h2>位置情報</h2><label><input type="checkbox" id="gps" ${data.autoGPS ? "checked" : ""}> 記録作成時に現在地を取得する</label><p class="note">初期設定OFF。位置情報は個人の記録にのみ保存します。</p></div><div class="panel">${accountPanel()}</div><div class="panel"><h2>データ管理</h2><p class="note">未同期データを含むJSONを保存できます。ブラウザのデータ削除前に書き出してください。</p><button id="sync-now">今すぐ同期</button> <button id="reload-server">サーバーの最新情報を読み込む</button> <button id="import-old">以前の端末データを取り込む</button> <button id="export">データを書き出す</button> <button id="clear">この端末のデータを削除</button></div>`;
+      $("#logout").onclick = logout;
+      document
+        .querySelectorAll("[data-auth]")
+        .forEach(
+          (b) =>
+            (b.onclick = () =>
+              beginAuth(b.dataset.auth, b.dataset.mode).catch((e) => toast(e.message))),
+        );
+      $("#gps").onchange = (e) => {
+        data.autoGPS = e.target.checked;
+        save();
+      };
+      $("#sync-now").onclick = async () => {
+        await sync();
+        if (!dirty) toast("同期済みです");
+      };
+      $("#reload-server").onclick = async () => {
+        if (
+          dirty &&
+          !confirm(
+            "未同期の変更をサーバーの情報で置き換えます。先に書き出すことをおすすめします。続けますか？",
+          )
+        )
+          return;
+        try {
+          const s = await api("state");
+          if (s.id !== owner) throw Error("アカウントが変わりました");
+          data = s.state;
+          revision = s.revision;
+          dirty = false;
+          conflict = false;
+          persist();
+          render();
+          network();
+          toast("最新情報を読み込みました");
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+      $("#import-old").onclick = () => {
+        try {
+          let old = JSON.parse(localStorage.getItem(STORAGE + "legacy-v1"));
+          if (!old) return toast("以前のデータはありません");
+          if (
+            !confirm("以前の名刺情報と設定を取り込みますか？ サンプルの交換相手は取り込みません。")
+          )
+            return;
+          data.me = old.me;
+          data.event = old.event || "";
+          data.autoGPS = !!old.autoGPS;
+          save();
+          render();
+          toast("名刺情報を取り込みました");
+        } catch {
+          toast("取り込めませんでした");
+        }
+      };
+      $("#export").onclick = () => {
+        let u = URL.createObjectURL(
+          new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+        );
+        let a = document.createElement("a");
+        a.href = u;
+        a.download = "trail-card-backup.json";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(u), 2000);
+      };
+      $("#clear").onclick = () => {
+        if (
+          confirm(
+            "このブラウザのオフライン保存データを削除しますか？ 未同期の変更は失われます。認証Cookieとサーバーの記録は残ります。",
+          )
+        ) {
+          localStorage.removeItem(key());
+          localStorage.removeItem(STORAGE + "owner-id");
+          localStorage.removeItem(STORAGE + "legacy-v1");
+          if ("caches" in window)
+            caches
+              .keys()
+              .then((ks) =>
+                Promise.all(
+                  ks.filter((k) => k.startsWith(CACHE_PREFIX)).map((k) => caches.delete(k)),
+                ),
+              );
+          data = structuredClone(initial);
+          dirty = false;
+          ready = false;
+          render();
+          toast("端末内のデータを削除しました。サーバーのデータは保持されています");
+        }
+      };
+    }
+  }
+  function results() {
+    let q = $("#search").value.toLowerCase(),
+      cs = data.contacts.filter((c) =>
+        JSON.stringify([c.name, c.genres, c.intro, c.history]).toLowerCase().includes(q),
+      );
+    cs.sort(
+      $("#sort").value === "name"
+        ? (a, b) => a.name.localeCompare(b.name, "ja")
+        : (a, b) => (b.history.at(-1)?.date || "").localeCompare(a.history.at(-1)?.date || ""),
+    );
+    $("#results").innerHTML = cs.length
+      ? `<div class="grid">${cs.map((c) => card(c)).join("")}</div>`
+      : data.contacts.length
+        ? '<div class="empty">一致する名刺がありません。</div>'
+        : '<div class="empty">まだ名刺はありません。<br><span class="note">「交換する」から相手のQRコードを読み取れます。</span></div>';
+    bindCards();
+  }
+  function bindCards() {
+    document.querySelectorAll("[data-contact]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          let sample = false,
+            c = data.contacts.find((c) => c.id === b.dataset.contact);
+          detail(c, sample);
+        }),
+    );
+  }
+  function validURL(s) {
+    try {
+      return ["https:", "http:"].includes(new URL(s).protocol);
+    } catch {
+      return false;
+    }
+  }
+  function links(s) {
+    return (s || "")
+      .split("\n")
+      .filter(validURL)
+      .map(
+        (u) => `<p><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a></p>`,
+      )
+      .join("");
+  }
+  function detail(c, sample = false, mine = false) {
+    let d = $("#modal");
+    d.innerHTML = `<div class="row"><span class="note">${sample ? "サンプル名刺" : mine ? "プレビュー" : "交換した名刺"}</span><button id="close">閉じる</button></div><h2>${esc(c.name || "ハンドルネーム未設定")}</h2><p>${esc(c.intro)}</p>${cardDesign(c)}<div>${(
+      c.genres || ""
+    )
+      .split(",")
+      .map((g) => `<span class="tag">${esc(g)}</span>`)
+      .join("")}</div>${links(c.videos)}${links(c.links)}${
+      sample
+        ? `<p class="notice">${esc(c.name)}さんからの交換申請（動作確認用）</p><button class="primary" id="approve">承認して名刺帳に追加</button>`
+        : mine
+          ? ""
+          : `<div class="row"><h2>会った記録</h2><button id="addhistory">＋ 記録を追加</button></div><div>${
+              [...(c.history || [])]
+                .reverse()
+                .map(
+                  (h) =>
+                    `<div class="history"><b>${esc(h.date)}　${esc(h.place)}</b><div class="note">当時の名前：${esc(h.name)}</div><p>${esc(h.memo)}</p>${h.gps ? `<div class="note">${h.gps.lat.toFixed(5)}, ${h.gps.lng.toFixed(5)} · 精度 約${Math.round(h.gps.accuracy)}m</div><a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${h.gps.lat}&mlon=${h.gps.lng}#map=15/${h.gps.lat}/${h.gps.lng}">地図を開く（通信が必要）</a>` : ""}<div class="note">${dirty ? "端末保存済み · 同期待ち" : "サーバー同期済み"}</div><button data-delete="${esc(h.id)}">削除</button></div>`,
+                )
+                .join("") || '<p class="note">会った記録はまだありません。</p>'
+            }</div>`
+    }`;
+    if (!d.open) d.showModal();
+    $("#close").onclick = () => d.close();
+    if (!sample && !mine) {
+      $("#addhistory").onclick = () => historyForm(c);
+      d.querySelectorAll("[data-delete]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            if (confirm("この会った記録を削除しますか？")) {
+              c.history = c.history.filter((h) => h.id !== b.dataset.delete);
+              save();
+              detail(c);
+            }
+          }),
+      );
+    }
+  }
+  function historyForm(c) {
+    let d = $("#modal"),
+      gps = null;
+    d.innerHTML = `<div class="row"><h2>会った記録</h2><button id="close">閉じる</button></div><p>${esc(c.name)}さんとの出会い</p><form id="history"><label>日時</label><input name="date" type="datetime-local" required value="${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}"><label>場所・イベント名</label><input name="place" value="${esc(data.event)}"><label>当時のハンドルネーム</label><input name="name" required value="${esc(c.name)}"><label>自分だけのメモ</label><textarea name="memo" maxlength="3000" placeholder="話したこと、次に聞きたいことなど"></textarea><label>位置情報</label><button type="button" id="locate">現在地を記録</button> <button type="button" id="removegps">位置を削除</button><p class="note" id="gpsresult">未取得</p><button class="primary">記録を保存</button></form>`;
+    if (!d.open) d.showModal();
+    $("#close").onclick = () => {
+      d.close();
+      render();
+    };
+    $("#locate").onclick = () => {
+      if (!navigator.geolocation) return toast("この端末では位置情報を利用できません");
+      $("#gpsresult").textContent = "位置を取得中… 取得しなくても保存できます。";
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          if (!$("#gpsresult")) return;
+          gps = {
+            lat: p.coords.latitude,
+            lng: p.coords.longitude,
+            accuracy: p.coords.accuracy,
+            acquiredAt: new Date(p.timestamp).toISOString(),
+          };
+          $("#gpsresult").textContent =
+            `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}（精度 約${Math.round(gps.accuracy)}m）`;
+        },
+        () => {
+          if ($("#gpsresult"))
+            $("#gpsresult").textContent =
+              "取得できませんでした。許可設定・受信環境を確認してください。";
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+      );
+    };
+    $("#removegps").onclick = () => {
+      gps = null;
+      $("#gpsresult").textContent = "位置情報なし";
+    };
+    $("#history").onsubmit = (e) => {
+      e.preventDefault();
+      c.history.push({
+        ...Object.fromEntries(new FormData(e.target)),
+        id: crypto.randomUUID
+          ? crypto.randomUUID()
+          : Date.now().toString(36) + Math.random().toString(36).slice(2),
+        gps,
+      });
+      if (save()) {
+        d.close();
+        render();
+        toast("記録を端末に保存しました");
+      }
+    };
+    if (data.autoGPS) $("#locate").click();
+  }
+  function readFile(f) {
+    return new Promise((ok, no) => {
+      let r = new FileReader();
+      r.onload = () => ok(r.result);
+      r.onerror = no;
+      r.readAsDataURL(f);
+    });
+  }
+  function go(p) {
+    stopScanner();
+    page = p;
+    render();
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => go(b.dataset.view)));
+  render();
+  initialize();
+  if ("serviceWorker" in navigator)
+    navigator.serviceWorker.register(BASE + "sw.js", { scope: BASE }).catch(() => {});
+  async function drawTicket() {
+    const canvas = $("#exchange-code"),
+      status = $("#qr-status");
+    if (!canvas) return;
+    if (!navigator.onLine) {
+      status.textContent = "圏外では新しい交換用QRコードを発行できません。";
+      canvas.hidden = true;
+      return;
+    }
+    try {
+      await sync();
+      if (dirty) throw Error("先に名刺の同期を完了してください");
+      if (!ticket || ticket.expires < Date.now()) ticket = await api("ticket", "POST", {});
+      if (!$("#exchange-code")) return;
+      await window.TrailQR.toCanvas(canvas, ticket.url, {
+        width: 240,
+        margin: 4,
+        errorCorrectionLevel: "M",
+        color: { dark: "#18382c", light: "#ffffff" },
+      });
+      canvas.hidden = false;
+      status.innerHTML = '<button id="copy-exchange-link">交換用リンクをコピー</button><br>';
+      $("#copy-exchange-link").onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(ticket.url);
+          toast("交換用リンクをコピーしました");
+        } catch {
+          toast("コピーできませんでした");
+        }
+      };
+      status.append(
+        "名刺交換用QR · 有効期限 " +
+          new Date(ticket.expires).toLocaleTimeString("ja-JP", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+      );
+      const remain = ticket.expires - Date.now();
+      setTimeout(
+        () => {
+          if ($("#qr-status") && ticket?.expires <= Date.now()) {
+            $("#exchange-code").hidden = true;
+            $("#qr-status").textContent = "有効期限が切れました。QRを更新してください。";
+          }
+        },
+        Math.max(0, remain) + 100,
+      );
+    } catch (e) {
+      canvas.hidden = true;
+      status.textContent = e.message;
+    }
+  }
+  async function showScanConfirmation(token) {
+    stopScanner();
+    try {
+      const v = await api("preview?token=" + encodeURIComponent(token));
+      const d = $("#modal");
+      d.innerHTML = `<div class="row"><h2>交換相手を確認</h2><button id="close">閉じる</button></div><h2>${esc(v.profile.name)}</h2><p>${esc(v.profile.intro)}</p><button id="request-exchange" class="primary">この人に交換を申請</button>`;
+      if (!d.open) d.showModal();
+      $("#close").onclick = () => d.close();
+      $("#request-exchange").onclick = async () => {
+        try {
+          await sync();
+          if (dirty || !data.me.name) throw Error("先に自分の名刺を登録・同期してください");
+          const r = await api("exchange", "POST", { token });
+          d.close();
+          history.replaceState(null, "", location.pathname);
+          toast(
+            r.alreadyConnected
+              ? "すでに交換済みです"
+              : "交換を申請しました。相手の承認をお待ちください。",
+          );
+          await refresh();
+          go("exchange");
+          if (r.alreadyConnected) {
+            const c = data.contacts.find((c) => c.id === r.id);
+            if (c) historyForm(c);
+          }
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+  async function loadRequests() {
+    const el = $("#requests");
+    if (!el) return;
+    try {
+      const v = await api("requests");
+      if (!$("#requests")) return;
+      el.innerHTML = v.requests.length
+        ? v.requests
+            .map(
+              (r) =>
+                `<div class="history"><b>${esc(r.profile.name)}</b><p class="note">${r.incoming ? "受信" : "送信"} · ${{ pending: "承認待ち", approved: "交換成立", declined: "見送り" }[r.status] || esc(r.status)}</p>${r.incoming && r.status === "pending" ? `<button class="primary" data-approve="${esc(r.id)}">承認する</button> <button data-decline="${esc(r.id)}">見送る</button>` : ""}</div>`,
+            )
+            .join("")
+        : "交換申請はありません。";
+      el.querySelectorAll("[data-approve],[data-decline]").forEach(
+        (b) =>
+          (b.onclick = async () => {
+            try {
+              b.disabled = true;
+              await api("approve", "POST", {
+                id: b.dataset.approve || b.dataset.decline,
+                accept: !!b.dataset.approve,
+              });
+              await refresh();
+              toast(b.dataset.approve ? "名刺を交換しました" : "申請を見送りました");
+              await loadRequests();
+            } catch (e) {
+              b.disabled = false;
+              toast(e.message);
+            }
+          }),
+      );
+      if (v.requests.some((r) => r.status === "approved")) await refresh();
+    } catch (e) {
+      el.textContent = e.message;
+    }
+  }
+  async function startScanner() {
+    if (!navigator.onLine) return toast("初期版の名刺交換には通信が必要です");
+    if (!navigator.mediaDevices?.getUserMedia)
+      return toast("カメラを利用できません。交換用リンクを入力してください");
+    try {
+      scannerStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      if (!$("#scan-video")) {
+        stopScanner();
+        return;
+      }
+      const video = $("#scan-video");
+      video.srcObject = scannerStream;
+      video.style.display = "block";
+      $("#stop-scan").hidden = false;
+      await video.play();
+      const canvas = document.createElement("canvas"),
+        ctx = canvas.getContext("2d", { willReadFrequently: true });
+      function tick() {
+        if (!scannerStream || !$("#scan-video")) return;
+        if (video.readyState >= 2) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = window.TrailQR.decode(pixels.data, pixels.width, pixels.height);
+          if (code) {
+            try {
+              const url = new URL(code.data);
+              if (
+                url.origin === location.origin &&
+                url.pathname === BASE &&
+                url.searchParams.get("exchange")
+              ) {
+                showScanConfirmation(url.searchParams.get("exchange"));
+                return;
+              }
+            } catch {}
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      tick();
+    } catch (e) {
+      stopScanner();
+      toast("カメラを利用できません。権限設定を確認するか、交換用リンクを入力してください");
+    }
+  }
+  function stopScanner() {
+    if (scannerStream) {
+      scannerStream.getTracks().forEach((t) => t.stop());
+      scannerStream = null;
+    }
+    const video = $("#scan-video");
+    if (video) {
+      video.srcObject = null;
+      video.style.display = "none";
+    }
+    if ($("#stop-scan")) $("#stop-scan").hidden = true;
+  }
+  addEventListener("pagehide", stopScanner);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopScanner();
+  });
+
+  let knownApproved = null,
+    pollInFlight = false;
+  async function pollRequests() {
+    if (!ready || !navigator.onLine || document.hidden || pollInFlight) return;
+    pollInFlight = true;
+    try {
+      const r = await api("requests");
+      const count = r.requests.filter((x) => x.incoming && x.status === "pending").length;
+      const nav = document.querySelector('nav button[data-view="exchange"]');
+      if (nav) nav.textContent = "⇄　名刺交換" + (count ? " (" + count + ")" : "");
+      const approved = new Set(r.requests.filter((x) => x.status === "approved").map((x) => x.id));
+      if (knownApproved !== null && [...approved].some((id) => !knownApproved.has(id))) {
+        if (dirty) {
+          await sync();
+          if (dirty) return;
+        }
+        await refresh();
+        if (page === "book") render();
+        toast("名刺の交換情報を更新しました");
+      }
+      knownApproved = approved;
+    } catch {
+    } finally {
+      pollInFlight = false;
+    }
+  }
+  setInterval(pollRequests, 8000);
+})();
