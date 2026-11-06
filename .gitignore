@@ -1,0 +1,9 @@
+/private/config.php
+/private/data/
+*.sqlite
+*.sqlite-*
+*.pem
+*.key
+.env
+.DS_Store
+__pycache__/
