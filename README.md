@@ -6,19 +6,7 @@ Google／Xの設定が空欄でも名刺作成・交換を利用できます。C
 
 ## すでに設置済みの場合
 
-1. 更新中はアクセスを停止し、既存の `bin/backup.php` でDB・画像・設定をバックアップ。
-2. `private/src/` と `private/bin/` を更新。**既存の `private/config.php`、`data/`、`identity_key` は保持**します。
-3. SSHから次を実行（ACCOUNTは置換）。初期化し直したりDBを削除したりしません。
-
-```sh
-php /home/ACCOUNT/trail-card-private/bin/migrate.php
-```
-
-4. `public/` の中身を公開側 `/card/` に更新。**`index.php` の `$private` は、今回動作した実際の絶対パスを維持**してください（配布版の値で上書きしない）。
-5. 公開を再開して再読み込み。更新したService Workerを読み込ませるため、開いているアプリを一度閉じて再度開きます。
-6. 未連携状態で名刺を作成し、再訪して同じ名刺が表示されることを確認。外部連携を設定した場合、別ブラウザーの設定画面にある「以前のアカウントを使う」で復帰を確認。
-
-`migrate.php` は再実行可能です。既存のOAuthユーザーは従来の名刺IDを維持します。旧版の連携表示は最初は「外部アカウント」となります。
+SQLite版からの移行は [MySQLへの切り替え手順](docs/mysql.md) を参照してください。
 
 未連携でログアウトすると、元の名刺へ原則復帰できません。ログアウト後の再アクセスでは新しい仮アカウントを作成します。「端末データ削除」はオフライン保存だけを削除し、認証Cookieは残す動作です。外部アカウントへの切り替えは今の名刺や会った記録を統合しません。未同期の変更がある場合は切り替えを停止します。
 
@@ -26,7 +14,7 @@ php /home/ACCOUNT/trail-card-private/bin/migrate.php
 
 ---
 
-# TRAIL CARD — さくら向け PHP / SQLite 版
+# TRAIL CARD — さくら向け PHP / MySQL 版
 
 PHP 8.2 以上を対象（PHP 8.3 CLIで検証）。フレームワーク・Composer・Node.jsは本番サーバーに不要です。
 既存のSites版とは別の配布版です。SitesでPHPを実行するものではありません。
@@ -34,15 +22,15 @@ PHP 8.2 以上を対象（PHP 8.3 CLIで検証）。フレームワーク・Comp
 ## 構成
 
 - `public/`：Web公開するファイルだけ。既存の画面、テンプレート、QR、PWA、PHP入口。
-- `private/`：公開ディレクトリーの外。設定、API、SQLite、画像、セッション、バックアップ。
-- SQLiteはPDO経由。画像は `private/data/images/`。データファイルをURLで直接配信しません。
+- `private/`：公開ディレクトリーの外。設定、API、画像、セッション、バックアップ。
+- MySQLはPDO経由。画像は `private/data/images/`。データファイルをURLで直接配信しません。
 - Google / X の認証後、プロバイダーとユーザーIDをHMAC化して保存。メール、本名、パスワード、外部アクセストークンは永続保存しません。手入力した名刺・GPS・メモは保存対象です。
 - PHPセッションはSecure/HttpOnly/SameSite=Lax、Cookie Pathは `/card/`。セッションは最大7日、端末認証Cookieは発行から180日。セッション失効後も有効な端末Cookieから復帰します。ログアウト時にはこの設置先専用の端末データとキャッシュだけを削除します。Service Workerの制御範囲も `/card/` 内です。
-- SQLiteの書き込みは短いトランザクションと5秒のロック待ち。競合は409で検知し上書きを防ぎます。ロック待ち超過は再試行可能な503。SQLiteのロールバックジャーナルを使用します。
+- MySQLのInnoDB行ロックを使用します。競合は409で検知し上書きを防ぎます。ロック待ち超過は再試行可能な503。
 
 ## 1. サーバーの準備
 
-1. PHP 8.2以上を選択。`pdo_sqlite`、`curl`、`fileinfo` が必要です。Google認証には `openssl` も必要です。
+1. PHP 8.2以上を選択。`pdo_mysql`、`curl`、`fileinfo` が必要です。Google認証には `openssl` も必要です。
 2. 既存の `over.rulez.jp` のWeb公開フォルダー内に `card` フォルダーを作成します。既存サイトのWeb公開フォルダー設定は変更しません。さくらの共有SSLでHTTPSが有効であることを確認します。
 3. 配布物の `public/` の**中身**（`.htaccess`含む）を作成した **`card/` フォルダー内**へアップロード。
 4. `private/` は `/home/ACCOUNT/trail-card-private` へアップロード。**www の中には置かないでください。**
@@ -55,7 +43,7 @@ PHP 8.2 以上を対象（PHP 8.3 CLIで検証）。フレームワーク・Comp
 
 `base_url` は **`https://over.rulez.jp/card`** にします（末尾スラッシュなし）。`data_dir` は公開フォルダーの外を指定。
 
-SSH接続後、サーバーで利用可能なPHPコマンドを使って実行します（コマンド名は契約環境に合わせてください）。
+[設定例](private/config.example.php) の `mysql` に専用DBの接続情報を設定します。SSH接続後、サーバーで利用可能なPHPコマンドを使って実行します（コマンド名は契約環境に合わせてください）。
 
 ```sh
 php -v
@@ -115,9 +103,9 @@ Google認証の具体的な設定手順は [docs/google-auth.md](docs/google-aut
 php /home/ACCOUNT/trail-card-private/bin/backup.php
 ```
 
-非公開 `data/backups/日時-乱数/` に、SQLiteの一貫したスナップショット、DBから参照中の画像、設定を保存します。画像は更新時に別ファイルとして作成し、現在は自動削除しません。バックアップには秘密情報が含まれます。必要に応じてcron登録し、暗号化した別の場所にも保管してください。世代削除は自動化していません。
+非公開 `data/backups/日時-乱数/` に、MySQLの一貫したSQLダンプ、DBから参照中の画像、設定を保存します。画像は更新時に別ファイルとして作成し、現在は自動削除しません。バックアップには秘密情報が含まれます。必要に応じてcron登録し、暗号化した別の場所にも保管してください。世代削除は自動化していません。
 
-復旧はメンテナンス中に実施：公開側からアプリへのアクセスを停止 → 現在データを退避 → バックアップの `app.sqlite` と `images/` を `data/` へ復元 → `identity_key` を同じ値に戻す → セッションを破棄 → 動作確認して再開。コピー先パスは本番設定に合わせます。
+復元は [MySQLへの切り替え手順](docs/mysql.md) を参照してください。
 
 ## 6. 現在のSites版からの移行
 
@@ -127,21 +115,11 @@ ChatGPT認証とGoogle/X認証のIDは異なります。メール等からの自
 
 ## 7. 検証・未対応
 
-```sh
-php tests/api.php
-php tests/auth.php
-php tests/guest.php
-node tests/notifications.mjs
-node tests/subpath.mjs
-node --check public/app.js
-# 以下はPython 3も必要（開発環境でのみ実行）
-python3 tests/http-entry.py php
-python3 tests/backup.py php
-```
+開発用MySQLの接続先を `MYSQL_HOST`、`MYSQL_USER`、`MYSQL_PWD` に設定し、`sh tests/run.sh` を実行します。一時DBの作成・削除権限が必要です。
 
-APIテストは一時SQLiteで認可、交換の冪等性、私的記録、更新競合、画像検査・所有権、期限切れ、CSRFを確認します。認証テストはstate/PKCE/nonce生成、コールバック拒否、Googleトークン署名・各claim検証、連携時の名刺維持を確認します。Google/Xの実ログイン、さくら実機、スマホ実機は設置後の確認が必要です。
+APIテストは一時MySQLで認可、交換の冪等性、私的記録、更新競合、画像検査・所有権、期限切れ、CSRFを確認します。認証テストはstate/PKCE/nonce生成、コールバック拒否、Googleトークン署名・各claim検証、連携時の名刺維持を確認します。Google/Xの実ログイン、さくら実機、スマホ実機は設置後の確認が必要です。
 
-現状はSQLite専用です。PDOを使っていますが、MySQLはDDL/SQLの差分があるため設定切替だけでは移行できません。イベントでの集中アクセスは実測して判断してください。公開プロフィール、アカウント削除、通報/ブロック、画像の自動掃除、外部アカウントの連携解除・アカウント統合は未実装です。
+公開プロフィール、アカウント削除、通報/ブロック、画像の自動掃除、外部アカウントの連携解除・アカウント統合は未実装です。
 
 ## 更新時
 

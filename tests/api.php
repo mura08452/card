@@ -19,10 +19,10 @@ function rejected(callable $f,int $status,string $label): void {
 $dir=sys_get_temp_dir().'/trail-test-'.bin2hex(random_bytes(6));
 mkdir($dir,0700);
 $c=['data_dir'=>$dir,'base_url'=>'https://over.rulez.jp'.($argv[1]??'/card')];
-$db=new PDO('sqlite:'.$dir.'/app.sqlite');
-$db->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
-$db->exec(file_get_contents(dirname(__DIR__).'/private/schema.sql'));
-$db=database($c);
+require_once dirname(__DIR__) . '/private/src/storage.php';
+$c['mysql'] = require __DIR__ . '/mysql.php';
+initializeStorage($c);
+$db = database($c);
 function callApi(string $user,string $action,string $method='GET',array $body=[],array $params=[]): array {
     global $db,$c;
     return api($db,$c,$user,$action,$method,$body,$params);

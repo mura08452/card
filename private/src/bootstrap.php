@@ -38,7 +38,7 @@ function securityHeaders(): void {
 
 function errorResponse(Throwable $e): never {
     $status=($e instanceof RuntimeException&&in_array($e->getCode(),[400,401,403,404,409,413,429,503]))?$e->getCode():500;
-    if($e instanceof PDOException&&str_contains($e->getMessage(),'locked'))$status=503;
+    if($e instanceof PDOException&&in_array((int)($e->errorInfo[1] ?? 0), [1205, 1213], true))$status=503;
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     echo encode(['message'=>$status<500?$e->getMessage():($status===503?'初期設定または一時的な混雑のため利用できません。時間をおいて再試行してください。':'処理に失敗しました。時間をおいて再試行してください。')]);

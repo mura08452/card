@@ -37,10 +37,19 @@ function emptyState(): array {
 }
 
 function database(array $c): PDO {
-    $file=$c['data_dir'].'/app.sqlite';
-    if(!is_file($file))fail('データベースの初期化が必要です',503);
-    $db=new PDO('sqlite:'.$file,null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
-    $db->exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+    $mysql = $c['mysql'] ?? [];
+    foreach (['host', 'database', 'user', 'password'] as $field) {
+        if (!is_string($mysql[$field] ?? null) || $mysql[$field] === '') {
+            fail('MySQLの接続設定が必要です', 503);
+        }
+    }
+    $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+        $mysql['host'], $mysql['port'] ?? 3306, $mysql['database']);
+    $db = new PDO($dsn, $mysql['user'], $mysql['password'], [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ]);
     return $db;
 }
 
@@ -58,7 +67,7 @@ function account(PDO $db,string $identity): array {
     $a=one($db,'SELECT * FROM accounts WHERE auth_id=?',[$identity]);
     if($a)return $a;
     $e=emptyState();
-    query($db,'INSERT OR IGNORE INTO accounts VALUES(?,?,?,?,0)',[uid(),$identity,encode($e['me']),encode($e)]);
+    query($db,'INSERT INTO accounts VALUES(?,?,?,?,0) ON DUPLICATE KEY UPDATE auth_id=auth_id',[uid(),$identity,encode($e['me']),encode($e)]);
     return one($db,'SELECT * FROM accounts WHERE auth_id=?',[$identity]);
 }
 
@@ -128,8 +137,8 @@ function api(PDO $db,array $c,string $identity,string $action,string $method,arr
         $contacts=[];
         foreach(($body['state']['contacts']??[]) as $contact)if(in_array($contact['id']??null,$allowed,true))$contacts[]=['id'=>$contact['id'],'history'=>array_map('history',array_slice($contact['history']??[],0,2000))];
         try {
-            $db->exec('BEGIN IMMEDIATE');
-            if((int)one($db,'SELECT revision FROM accounts WHERE id=?',[$id])['revision']!==$body['revision'])fail('別の端末で更新されました。書き出してから最新データを読み込んでください。',409);
+            $db->beginTransaction();
+            if((int)one($db,'SELECT revision FROM accounts WHERE id=? FOR UPDATE',[$id])['revision']!==$body['revision'])fail('別の端末で更新されました。書き出してから最新データを読み込んでください。',409);
             foreach(['icon','image'] as $kind) {
                 $value=$p[$kind];
                 if(!$value)continue;
@@ -190,7 +199,7 @@ function api(PDO $db,array $c,string $identity,string $action,string $method,arr
         $ids=[$id,$t['owner_id']];
         sort($ids);
         if(one($db,'SELECT id FROM connections WHERE left_id=? AND right_id=?',$ids))return ['alreadyConnected'=>true,'id'=>$t['owner_id'],'profile'=>$p];
-        query($db,'INSERT OR IGNORE INTO exchange_requests VALUES(?,?,?,?,?,?)',[uid(),$hash,$t['owner_id'],$id,'pending',gmdate('Y-m-d\TH:i:s.000\Z')]);
+        query($db,'INSERT INTO exchange_requests VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id',[uid(),$hash,$t['owner_id'],$id,'pending',gmdate('Y-m-d\TH:i:s.000\Z')]);
         return ['profile'=>$p,'pending'=>true];
     }
     if($action==='requests'&&$method==='GET') {
@@ -198,9 +207,9 @@ function api(PDO $db,array $c,string $identity,string $action,string $method,arr
         return ['requests'=>array_map(fn($r)=>['id'=>$r['id'],'status'=>$r['status'],'created'=>$r['created'],'incoming'=>$r['owner_id']===$id,'profile'=>json_decode($r['profile'],true)],$rs)];
     }
     if($action==='approve'&&$method==='POST') {
-        $db->exec('BEGIN IMMEDIATE');
+        $db->beginTransaction();
         try {
-            $r=one($db,'SELECT * FROM exchange_requests WHERE id=? AND owner_id=?',[txt($body['id']??'',100),$id]);
+            $r=one($db,'SELECT * FROM exchange_requests WHERE id=? AND owner_id=? FOR UPDATE',[txt($body['id']??'',100),$id]);
             if(!$r)fail('申請が見つかりません',404);
             $status=$r['status'];
             if($status==='pending') {
@@ -210,7 +219,7 @@ function api(PDO $db,array $c,string $identity,string $action,string $method,arr
                     $ids=[$id,$r['requester_id']];
                     sort($ids);
                     $names=array_map(fn($i)=>json_decode($i===$id?$a['profile']:$other['profile'],true)['name'],$ids);
-                    query($db,'INSERT OR IGNORE INTO connections VALUES(?,?,?,?,?,?)',[uid(),...$ids,$r['created'],...$names]);
+                    query($db,'INSERT INTO connections VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id',[uid(),...$ids,$r['created'],...$names]);
                 }
                 query($db,'UPDATE exchange_requests SET status=? WHERE id=?',[$status,$r['id']]);
             }

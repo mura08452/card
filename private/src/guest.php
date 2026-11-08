@@ -5,9 +5,10 @@ function deviceCookie(array $c): string {
 }
 
 function migrateIdentity(PDO $db): void {
-    $db->exec("CREATE TABLE IF NOT EXISTS identities (subject TEXT PRIMARY KEY, auth_id TEXT NOT NULL, provider TEXT NOT NULL); CREATE TABLE IF NOT EXISTS devices (hash TEXT PRIMARY KEY, auth_id TEXT NOT NULL, expires INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS devices_expiry ON devices(expires);");
-    // Preserve accounts created with the previous OAuth-only version.
-    $db->exec("INSERT OR IGNORE INTO identities SELECT auth_id,auth_id,'legacy' FROM accounts WHERE auth_id NOT LIKE 'guest:%'");
+    $db->exec("INSERT INTO identities (subject, auth_id, provider)
+        SELECT a.auth_id, a.auth_id, 'legacy' FROM accounts a
+        WHERE a.auth_id NOT LIKE 'guest:%'
+        ON DUPLICATE KEY UPDATE provider=identities.provider");
 }
 
 function deviceIssue(PDO $db,array $c,string $identity): void {
@@ -49,11 +50,12 @@ function linkedProviders(PDO $db,string $identity): array {
 }
 
 function linkIdentity(PDO $db,string $subject,string $provider,string $current): void {
-    $db->exec('BEGIN IMMEDIATE');
+    $db->beginTransaction();
     try {
-        $row=one($db,'SELECT auth_id FROM identities WHERE subject=?',[$subject]);
+        query($db, 'INSERT INTO identities VALUES(?,?,?) ON DUPLICATE KEY UPDATE subject=subject',
+            [$subject, $current, $provider]);
+        $row=one($db,'SELECT auth_id FROM identities WHERE subject=? FOR UPDATE',[$subject]);
         if($row&&$row['auth_id']!==$current)fail('この外部アカウントは別の名刺アカウントに連携済みです。設定の「以前のアカウントを使う」から切り替えてください。自動統合は行いません。',409);
-        query($db,'INSERT OR IGNORE INTO identities VALUES(?,?,?)',[$subject,$current,$provider]);
         query($db,'UPDATE identities SET provider=? WHERE subject=?',[$provider,$subject]);
         $db->exec('COMMIT');
     }

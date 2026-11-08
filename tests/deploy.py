@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix='trail-deploy-') as tmp:
     shutil.copytree(source / 'private', private)
     shutil.copytree(source / 'public', public)
     shutil.copytree(source, release, ignore=shutil.ignore_patterns('.git'))
-    config = "<?php return ['base_url'=>'https://over.rulez.jp/card','data_dir'=>__DIR__.'/data','identity_key'=>'" + 'c' * 64 + "'];"
+    config = "<?php return ['mysql'=>require '" + str(pathlib.Path(__file__).resolve().with_name('mysql.php')) + "','base_url'=>'https://over.rulez.jp/card','data_dir'=>__DIR__.'/data','identity_key'=>'" + 'c' * 64 + "'];"
     (private / 'config.php').write_text(config)
     subprocess.run([php, str(private / 'bin/init.php')], check=True)
     (public / 'keep.txt').write_text('preserve')

@@ -1,40 +1,58 @@
-CREATE TABLE `accounts` (
-	`id` text PRIMARY KEY NOT NULL,
-	`auth_id` text NOT NULL,
-	`profile` text NOT NULL,
-	`state` text NOT NULL,
-	`revision` integer DEFAULT 0 NOT NULL
-);
---> statement-breakpoint
-CREATE UNIQUE INDEX `accounts_auth_id_unique` ON `accounts` (`auth_id`);--> statement-breakpoint
-CREATE TABLE `connections` (
-	`id` text PRIMARY KEY NOT NULL,
-	`left_id` text NOT NULL,
-	`right_id` text NOT NULL,
-	`met_at` text NOT NULL,
-	`left_name` text NOT NULL,
-	`right_name` text NOT NULL,
-	FOREIGN KEY (`left_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`right_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE UNIQUE INDEX `connection_pair` ON `connections` (`left_id`,`right_id`);--> statement-breakpoint
-CREATE TABLE `exchange_requests` (
-	`id` text PRIMARY KEY NOT NULL,
-	`ticket_hash` text NOT NULL,
-	`owner_id` text NOT NULL,
-	`requester_id` text NOT NULL,
-	`status` text NOT NULL,
-	`created` text NOT NULL,
-	FOREIGN KEY (`ticket_hash`) REFERENCES `tickets`(`hash`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`owner_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`requester_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE UNIQUE INDEX `request_ticket_user` ON `exchange_requests` (`ticket_hash`,`requester_id`);--> statement-breakpoint
-CREATE TABLE `tickets` (
-	`hash` text PRIMARY KEY NOT NULL,
-	`owner_id` text NOT NULL,
-	`expires` integer NOT NULL,
-	FOREIGN KEY (`owner_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE no action
-);
+CREATE TABLE IF NOT EXISTS accounts (
+    id VARCHAR(36) PRIMARY KEY,
+    auth_id VARCHAR(128) NOT NULL UNIQUE,
+    profile MEDIUMTEXT NOT NULL,
+    state MEDIUMTEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS tickets (
+    hash CHAR(64) PRIMARY KEY,
+    owner_id VARCHAR(36) NOT NULL,
+    expires BIGINT NOT NULL,
+    FOREIGN KEY (owner_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS exchange_requests (
+    id VARCHAR(36) PRIMARY KEY,
+    ticket_hash CHAR(64) NOT NULL,
+    owner_id VARCHAR(36) NOT NULL,
+    requester_id VARCHAR(36) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    created VARCHAR(40) NOT NULL,
+    UNIQUE KEY request_ticket_user (ticket_hash, requester_id),
+    FOREIGN KEY (ticket_hash) REFERENCES tickets(hash),
+    FOREIGN KEY (owner_id) REFERENCES accounts(id),
+    FOREIGN KEY (requester_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS connections (
+    id VARCHAR(36) PRIMARY KEY,
+    left_id VARCHAR(36) NOT NULL,
+    right_id VARCHAR(36) NOT NULL,
+    met_at VARCHAR(40) NOT NULL,
+    left_name TEXT NOT NULL,
+    right_name TEXT NOT NULL,
+    UNIQUE KEY connection_pair (left_id, right_id),
+    FOREIGN KEY (left_id) REFERENCES accounts(id),
+    FOREIGN KEY (right_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS identities (
+    subject VARCHAR(128) PRIMARY KEY,
+    auth_id VARCHAR(128) NOT NULL,
+    provider VARCHAR(16) NOT NULL,
+    FOREIGN KEY (auth_id) REFERENCES accounts(auth_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS devices (
+    hash CHAR(64) PRIMARY KEY,
+    auth_id VARCHAR(128) NOT NULL,
+    expires BIGINT NOT NULL,
+    INDEX devices_expiry (expires),
+    FOREIGN KEY (auth_id) REFERENCES accounts(auth_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS card_storage_version (
+    version INTEGER PRIMARY KEY
+) ENGINE=InnoDB;

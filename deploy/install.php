@@ -66,7 +66,7 @@ try {
         $private === $source || str_starts_with($source, $private . '/')) {
         throw new RuntimeException('Private and release directories must be separate and outside www.');
     }
-    foreach (['pdo_sqlite', 'curl', 'fileinfo'] as $extension) {
+    foreach (['pdo_mysql', 'curl', 'fileinfo'] as $extension) {
         if (!extension_loaded($extension)) {
             throw new RuntimeException('Missing PHP extension: ' . $extension);
         }
@@ -84,9 +84,22 @@ try {
     $config = require $private . '/config.php';
     $data = realpath($config['data_dir'] ?? '');
     if (($config['base_url'] ?? '') !== 'https://over.rulez.jp/card' || !$data ||
-        $data === $webRoot || str_starts_with($data, $webRoot . '/') || !is_file($data . '/app.sqlite')) {
-        throw new RuntimeException('Check base_url and existing private SQLite data directory.');
+        $data === $webRoot || str_starts_with($data, $webRoot . '/')) {
+        throw new RuntimeException('Check base_url and private data directory.');
     }
+    require_once $source . '/private/src/core.php';
+    $targetDb = database($config);
+    $legacy = str_contains(file_get_contents($private . '/src/core.php'), "'sqlite:'");
+    if ($legacy && (!is_file($data . '/app.sqlite') || !extension_loaded('pdo_sqlite'))) {
+        throw new RuntimeException('SQLite source and pdo_sqlite are required for the first migration.');
+    }
+    if ($legacy && $targetDb->query('SHOW TABLES')->fetchColumn() !== false) {
+        throw new RuntimeException('Select a new empty MySQL database before migrating from SQLite.');
+    }
+    if (!$legacy && !$targetDb->query('SELECT version FROM card_storage_version WHERE version=1')->fetchColumn()) {
+        throw new RuntimeException('Existing MySQL installation not found.');
+    }
+    $targetDb = null;
     foreach (['private', 'public'] as $directory) {
         $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source . '/' . $directory, FilesystemIterator::SKIP_DOTS));
         foreach ($files as $file) {
@@ -123,9 +136,9 @@ try {
         copyTree($source . '/private/' . $item, $private . '/' . $item);
     }
     runPhp($private . '/bin/migrate.php');
-    $db = new PDO('sqlite:' . $data . '/app.sqlite');
-    if ($db->query('PRAGMA integrity_check')->fetchColumn() !== 'ok') {
-        throw new RuntimeException('SQLite integrity check failed.');
+    $db = database($config);
+    if (!$db->query('SELECT version FROM card_storage_version WHERE version=1')->fetchColumn()) {
+        throw new RuntimeException('MySQL storage verification failed.');
     }
     $db = null;
     foreach (new DirectoryIterator($source . '/public') as $file) {

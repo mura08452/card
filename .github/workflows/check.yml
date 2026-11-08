@@ -11,6 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install PHP extensions
-        run: sudo apt-get update && sudo apt-get install -y php8.3-cli php8.3-sqlite3 php8.3-curl
+        run: sudo apt-get update && sudo apt-get install -y php8.3-cli php8.3-mysql php8.3-sqlite3 php8.3-curl
+      - name: Start MySQL
+        run: sudo systemctl start mysql
       - name: Test
+        env:
+          MYSQL_PWD: root
         run: sh tests/run.sh

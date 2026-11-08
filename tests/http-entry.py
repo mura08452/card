@@ -7,7 +7,7 @@ source=pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='trail-entry-') as tmp:
     app=pathlib.Path(tmp)/'app';shutil.copytree(source,app,ignore=shutil.ignore_patterns('config.php','data'))
     private=app/'private';public=app/'public'
-    (private/'config.php').write_text("<?php return ['base_url'=>'https://over.rulez.jp"+base+"','data_dir'=>__DIR__.'/data','identity_key'=>'"+'b'*64+"','providers'=>['google'=>['client_id'=>'fixture','client_secret'=>'fixture']]];")
+    (private/'config.php').write_text("<?php return ['mysql'=>require '" + str(pathlib.Path(__file__).resolve().with_name('mysql.php')) + "','base_url'=>'https://over.rulez.jp"+base+"','data_dir'=>__DIR__.'/data','identity_key'=>'"+'b'*64+"','providers'=>['google'=>['client_id'=>'fixture','client_secret'=>'fixture']]];")
     subprocess.run([php,str(private/'bin/init.php')],check=True,stdout=subprocess.DEVNULL)
     def request(path,method='GET',cookie=None,headers=None,absolute=False):
         server={'REQUEST_URI':path if absolute else base+path,'REQUEST_METHOD':method,'DOCUMENT_ROOT':str(public),'HTTP_HOST':'over.rulez.jp','HTTPS':'on'};server.update(headers or {})

@@ -70,11 +70,11 @@ try {
 
 // A nonce is one-time flow state; tokens for another attempt must not link.
 googleReject($token, str_repeat('b', 64), $keys, 'reject token from another login attempt');
-$db = new PDO('sqlite::memory:');
-$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-$db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-$db->exec(file_get_contents(dirname(__DIR__) . '/private/schema.sql'));
-migrateIdentity($db);
+$c = ['data_dir' => $cacheDir];
+require_once dirname(__DIR__) . '/private/src/storage.php';
+$c['mysql'] = require __DIR__ . '/mysql.php';
+initializeStorage($c);
+$db = database($c);
 $identity = 'guest:' . str_repeat('c', 64);
 $before = account($db, $identity);
 query($db, 'UPDATE accounts SET profile=?, state=?, revision=2 WHERE auth_id=?',

@@ -8,11 +8,11 @@ function check($ok,$label) {
 $dir=sys_get_temp_dir().'/guest-'.bin2hex(random_bytes(8));
 mkdir($dir);
 mkdir($dir.'/sessions');
-$db=new PDO('sqlite:'.$dir.'/app.sqlite');
-$db->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
-$db->exec(file_get_contents(dirname(__DIR__).'/private/schema.sql'));
 $c=['data_dir'=>$dir,'base_url'=>'https://over.rulez.jp/card'];
-$db=database($c);
+require_once dirname(__DIR__) . '/private/src/storage.php';
+$c['mysql'] = require __DIR__ . '/mysql.php';
+initializeStorage($c);
+$db = database($c);
 $old=account($db,'old-oauth-hash');
 migrateIdentity($db);
 migrateIdentity($db);
