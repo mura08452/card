@@ -38,12 +38,8 @@ phase='release upload'
 echo '[3/4] Preparing remote directory (maximum 60 seconds)...'
 timeout 60s ssh -n "${ssh_options[@]}" "$target" "sh -c 'umask 077; mkdir -p \"$stage\"'"
 echo '[3/4] Uploading release (maximum 120 seconds)...'
-# Use the working SSH command channel rather than SCP's SFTP subsystem.
-# stdin carries the archive, so this SSH invocation must not use -n.
-# Keep incomplete transfers under .part and publish only after cat succeeds.
-timeout 120s ssh "${ssh_options[@]}" "$target" \
-  "sh -c 'set -eu; umask 077; cat > \"$stage/release.tgz.part\"; mv \"$stage/release.tgz.part\" \"$stage/release.tgz\"; echo Upload-complete'" \
-  < "$work/release.tgz"
+# Keep SSH stdin closed: login startup scripts may consume it before the command.
+python3 deploy/upload-release.py "$work/release.tgz" "$target" "$DEPLOY_PHP" "$stage" "${ssh_options[@]}"
 
 phase='server installation'
 echo '[4/4] Starting server backup, migration and installation...'

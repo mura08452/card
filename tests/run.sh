@@ -16,3 +16,4 @@ node --check readable/app.js
 node tests/notifications.mjs
 node tests/subpath.mjs
 python3 tests/deploy.py "$PHP_BIN"
+python3 tests/upload.py "$PHP_BIN"
