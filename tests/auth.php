@@ -53,4 +53,5 @@ $b=loginFlow('https://evil.example');
 verify($a['return']==='/?exchange='.str_repeat('a',64),'exchange retained through login');
 verify($b['return']==='/','external return URL rejected');
 verify(strlen($a['state'])===64&&strlen($a['verifier'])===64&&$a['state']!==$b['state']&&$a['verifier']!==$b['verifier'],'random state and PKCE verifier');
+verify(strlen($a['nonce'])===64 && $a['nonce']!==$b['nonce'], 'random Google nonce');
 echo "Auth checks passed; live provider callbacks require registered credentials.\n";

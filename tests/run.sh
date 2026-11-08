@@ -7,6 +7,7 @@ find private public deploy -name '*.php' -print | while IFS= read -r file; do
 done
 "$PHP_BIN" tests/api.php
 "$PHP_BIN" tests/auth.php
+"$PHP_BIN" tests/google.php
 "$PHP_BIN" tests/guest.php
 python3 tests/http-entry.py "$PHP_BIN"
 python3 tests/http-entry.py "$PHP_BIN" ''

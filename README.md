@@ -42,7 +42,7 @@ PHP 8.2 以上を対象（PHP 8.3 CLIで検証）。フレームワーク・Comp
 
 ## 1. サーバーの準備
 
-1. PHP 8.2以上を選択。`pdo_sqlite`、`curl`、`fileinfo` が必要です。
+1. PHP 8.2以上を選択。`pdo_sqlite`、`curl`、`fileinfo` が必要です。Google認証には `openssl` も必要です。
 2. 既存の `over.rulez.jp` のWeb公開フォルダー内に `card` フォルダーを作成します。既存サイトのWeb公開フォルダー設定は変更しません。さくらの共有SSLでHTTPSが有効であることを確認します。
 3. 配布物の `public/` の**中身**（`.htaccess`含む）を作成した **`card/` フォルダー内**へアップロード。
 4. `private/` は `/home/ACCOUNT/trail-card-private` へアップロード。**www の中には置かないでください。**
@@ -75,6 +75,8 @@ php /home/ACCOUNT/trail-card-private/bin/init.php
 
 ## 3. Google / X のアプリ登録
 
+Google認証の具体的な設定手順は [docs/google-auth.md](docs/google-auth.md) を参照してください。
+
 利用するプロバイダーだけ `client_id` / `client_secret` を設定。未設定のログイン方法は画面に出ません。
 
 | 項目 | Google | X |
@@ -85,7 +87,7 @@ php /home/ACCOUNT/trail-card-private/bin/init.php
 
 コールバックURLは完全一致で登録します。Google同意画面の公開/テストユーザー設定、X APIの利用条件・アクセス権を各管理画面で確認してください。Xの投稿権限、メール、DM、refresh tokenは要求しません。`tweet.read` は認証スコープとして要求しますが投稿取得処理はありません。
 
-認証フロー：state照合・10分の期限・PKCE S256 → サーバーでコード交換 → 固定のuserinfo APIでID確認 → セッションID再生成。トークンは保存しません。
+認証フロー：state照合・10分の期限・PKCE S256 → サーバーでコード交換 → Googleは署名・発行元・宛先・期限・nonceを検証したIDトークンで本人確認、Xは固定userinfo APIでID確認 → セッションID再生成。トークンは保存しません。
 
 **初回アクセスで仮アカウントが作成されます。設定からGoogleとXを同じ名刺へ連携できます。別アカウントに連携済みの場合は自動統合せず拒否します。「以前のアカウントを使う」は確認後に切り替えます。** Apple認証はこの配布版では未実装です。
 
@@ -137,7 +139,7 @@ python3 tests/http-entry.py php
 python3 tests/backup.py php
 ```
 
-APIテストは一時SQLiteで認可、交換の冪等性、私的記録、更新競合、画像検査・所有権、期限切れ、CSRFを確認します。認証テストはstate/PKCE生成とコールバック拒否を確認します。Google/Xの実ログイン、さくら実機、スマホ実機は設置後の確認が必要です。
+APIテストは一時SQLiteで認可、交換の冪等性、私的記録、更新競合、画像検査・所有権、期限切れ、CSRFを確認します。認証テストはstate/PKCE/nonce生成、コールバック拒否、Googleトークン署名・各claim検証、連携時の名刺維持を確認します。Google/Xの実ログイン、さくら実機、スマホ実機は設置後の確認が必要です。
 
 現状はSQLite専用です。PDOを使っていますが、MySQLはDDL/SQLの差分があるため設定切替だけでは移行できません。イベントでの集中アクセスは実測して判断してください。公開プロフィール、アカウント削除、通報/ブロック、画像の自動掃除、外部アカウントの連携解除・アカウント統合は未実装です。
 
