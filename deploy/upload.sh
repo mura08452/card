@@ -38,7 +38,12 @@ phase='release upload'
 echo '[3/4] Preparing remote directory (maximum 60 seconds)...'
 timeout 60s ssh -n "${ssh_options[@]}" "$target" "sh -c 'umask 077; mkdir -p \"$stage\"'"
 echo '[3/4] Uploading release (maximum 120 seconds)...'
-timeout 120s scp -B "${ssh_options[@]}" "$work/release.tgz" "$target:$stage/release.tgz"
+# Use the working SSH command channel rather than SCP's SFTP subsystem.
+# stdin carries the archive, so this SSH invocation must not use -n.
+# Keep incomplete transfers under .part and publish only after cat succeeds.
+timeout 120s ssh "${ssh_options[@]}" "$target" \
+  "sh -c 'set -eu; umask 077; cat > \"$stage/release.tgz.part\"; mv \"$stage/release.tgz.part\" \"$stage/release.tgz\"; echo Upload-complete'" \
+  < "$work/release.tgz"
 
 phase='server installation'
 echo '[4/4] Starting server backup, migration and installation...'
