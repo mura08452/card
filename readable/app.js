@@ -576,12 +576,12 @@
         ? `<p class="notice">${esc(c.name)}さんからの交換申請（動作確認用）</p><button class="primary" id="approve">承認して名刺帳に追加</button>`
         : mine
           ? ""
-          : `<div class="row"><h2>会った記録</h2><button id="addhistory">＋ 記録を追加</button></div><div>${
+          : `<div class="row"><h2>会った記録</h2><button id="addhistory">＋ 会った記録を追加</button></div><div>${
               [...(c.history || [])]
                 .reverse()
                 .map(
                   (h) =>
-                    `<div class="history"><b>${esc(h.date)}　${esc(h.place)}</b><div class="note">当時の名前：${esc(h.name)}</div><p>${esc(h.memo)}</p>${h.gps ? `<div class="note">${h.gps.lat.toFixed(5)}, ${h.gps.lng.toFixed(5)} · 精度 約${Math.round(h.gps.accuracy)}m</div><a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${h.gps.lat}&mlon=${h.gps.lng}#map=15/${h.gps.lat}/${h.gps.lng}">地図を開く（通信が必要）</a>` : ""}<div class="note">${dirty ? "端末保存済み · 同期待ち" : "サーバー同期済み"}</div><button data-delete="${esc(h.id)}">削除</button></div>`,
+                    `<div class="history"><b>${esc(h.date)}　${esc(h.place)}</b><div class="note">当時の名前：${esc(h.name)}</div><p>${esc(h.memo)}</p>${h.gps ? `<div class="note">${h.gps.lat.toFixed(5)}, ${h.gps.lng.toFixed(5)} · 精度 約${Math.round(h.gps.accuracy)}m</div><a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${h.gps.lat}&mlon=${h.gps.lng}#map=15/${h.gps.lat}/${h.gps.lng}">地図を開く（通信が必要）</a>` : ""}<div class="note">${dirty ? "端末保存済み · 同期待ち" : "サーバー同期済み"}</div><button data-memo="${esc(h.id)}">${h.memo ? "メモを編集" : "メモを追加"}</button> <button data-delete="${esc(h.id)}">削除</button></div>`,
                 )
                 .join("") || '<p class="note">会った記録はまだありません。</p>'
             }</div>`
@@ -590,6 +590,9 @@
     $("#close").onclick = () => d.close();
     if (!sample && !mine) {
       $("#addhistory").onclick = () => historyForm(c);
+      d.querySelectorAll("[data-memo]").forEach(button => {
+        button.onclick = () => editMeetingMemo(c.id, button.dataset.memo);
+      });
       d.querySelectorAll("[data-delete]").forEach(
         (b) =>
           (b.onclick = () => {
@@ -601,6 +604,30 @@
           }),
       );
     }
+  }
+  function editMeetingMemo(contactId, recordId) {
+    const contact = data.contacts.find(item => item.id === contactId);
+    const record = contact?.history.find(item => item.id === recordId);
+    if (!record) return toast("記録を読み直してください");
+    const original = record.memo || "";
+    const dialog = $("#modal");
+    dialog.innerHTML = `<div class="row"><h2>メモを編集</h2><button id="cancel-memo">戻る</button></div><p>${esc(contact.name)}　${esc(record.date)}　${esc(record.place)}</p><form id="meeting-memo"><label for="memo-text">自分だけのメモ</label><textarea id="memo-text" maxlength="3000"></textarea><button class="primary">メモを保存</button></form>`;
+    const field = $("#memo-text");
+    field.value = original;
+    $("#cancel-memo").onclick = () => detail(data.contacts.find(item => item.id === contactId) || contact);
+    $("#meeting-memo").onsubmit = event => {
+      event.preventDefault();
+      const current = data.contacts.find(item => item.id === contactId);
+      const entry = current?.history.find(item => item.id === recordId);
+      if (!entry || (entry.memo || "") !== original) return toast("記録が更新されました。開き直してください");
+      entry.memo = field.value;
+      if (!save()) {
+        entry.memo = original;
+        return;
+      }
+      detail(current);
+      toast("メモを端末に保存しました");
+    };
   }
   function historyForm(c) {
     let d = $("#modal"),
@@ -640,6 +667,11 @@
     };
     $("#history").onsubmit = (e) => {
       e.preventDefault();
+      const currentContact = data.contacts.find(item => item.id === c.id);
+      if (!currentContact) return toast("名刺を読み直してください");
+      c = currentContact;
+      if (c.history.length >= 2000) return toast("会った記録は2000件まで保存できます");
+      
       c.history.push({
         ...Object.fromEntries(new FormData(e.target)),
         id: crypto.randomUUID
@@ -651,7 +683,7 @@
         d.close();
         render();
         toast("記録を端末に保存しました");
-      }
+      } else { c.history.pop(); }
     };
     if (data.autoGPS) $("#locate").click();
   }
@@ -731,7 +763,7 @@
     try {
       const v = await api("preview?token=" + encodeURIComponent(token));
       const d = $("#modal");
-      d.innerHTML = `<div class="row"><h2>交換相手を確認</h2><button id="close">閉じる</button></div><h2>${esc(v.profile.name)}</h2><p>${esc(v.profile.intro)}</p><button id="request-exchange" class="primary">この人に交換を申請</button>`;
+      d.innerHTML = `<div class="row"><h2>交換相手を確認</h2><button id="close">閉じる</button></div><h2>${esc(v.profile.name)}</h2><p>${esc(v.profile.intro)}</p><button id="request-exchange" class="primary">${v.alreadyConnected ? "再会を記録" : "この人に交換を申請"}</button>`;
       if (!d.open) d.showModal();
       $("#close").onclick = () => d.close();
       $("#request-exchange").onclick = async () => {

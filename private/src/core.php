@@ -194,11 +194,15 @@ function api(PDO $db,array $c,string $identity,string $action,string $method,arr
         if(!$t||$t['expires']<microtime(true)*1000)fail('QRコードの有効期限が切れています');
         if($t['owner_id']===$id)fail('自分自身とは交換できません');
         $p=json_decode(one($db,'SELECT profile FROM accounts WHERE id=?',[$t['owner_id']])['profile'],true);
-        if($action==='preview')return ['profile'=>array_intersect_key($p,array_flip(['name','intro','genres']))];
-        if(!json_decode($a['profile'],true)['name'])fail('先に自分の名刺を登録してください');
         $ids=[$id,$t['owner_id']];
         sort($ids);
-        if(one($db,'SELECT id FROM connections WHERE left_id=? AND right_id=?',$ids))return ['alreadyConnected'=>true,'id'=>$t['owner_id'],'profile'=>$p];
+        $connected=(bool)one($db,'SELECT id FROM connections WHERE left_id=? AND right_id=?',$ids);
+        if($action==='preview')return [
+            'profile'=>array_intersect_key($p,array_flip(['name','intro','genres'])),
+            'alreadyConnected'=>$connected,
+        ];
+        if(!json_decode($a['profile'],true)['name'])fail('先に自分の名刺を登録してください');
+        if($connected)return ['alreadyConnected'=>true,'id'=>$t['owner_id'],'profile'=>$p];
         query($db,'INSERT INTO exchange_requests VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id',[uid(),$hash,$t['owner_id'],$id,'pending',gmdate('Y-m-d\TH:i:s.000\Z')]);
         return ['profile'=>$p,'pending'=>true];
     }
