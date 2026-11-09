@@ -1,3 +1,5 @@
+[開発のやることリスト](docs/todo.md)
+
 > GitHub からの更新方法は [deploy/README.md](deploy/README.md) を参照してください。
 
 # 今回の更新：仮アカウント＋任意の外部連携
