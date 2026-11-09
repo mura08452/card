@@ -1,9 +1,9 @@
 // Cache names and routes are isolated to this installation's /card/ scope.
 const BASE = new URL(self.registration.scope).pathname;
 const PREFIX = "trail-card-php:" + BASE + ":",
-  SHELL = PREFIX + "shell-v4",
+  SHELL = PREFIX + "shell-v5",
   IMAGES = PREFIX + "images-v3";
-const ASSETS = ["shell.html", "styles.css", "app.js", "qr.js", "manifest.json", "favicon.svg"].map(
+const ASSETS = ["shell.html", "styles.css", "app.js", "qr.js", "manifest.json", "favicon.ico"].map(
   (p) => BASE + p,
 );
 self.addEventListener("install", (e) => {
