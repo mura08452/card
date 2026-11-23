@@ -14,7 +14,7 @@ Variables:
 | `SAKURA_HOST` | SSH 接続に使用するさくらのサーバー名 |
 | `SAKURA_USER` | さくらのアカウント名 |
 | `SAKURA_PUBLIC_DIR` | `/home/実アカウント名/www/card` |
-| `SAKURA_PRIVATE_DIR` | `/home/実アカウント名/trail-card-private` など既存 private の絶対パス |
+| `SAKURA_PRIVATE_DIR` | `/home/実アカウント名/www-priv/card` （非公開プログラム・設定・データ） |
 | `SAKURA_PHP` | PHP 8.2 以上の CLI の絶対パス。未指定時 `/usr/local/bin/php` |
 
 Secrets:
@@ -51,7 +51,7 @@ SSH はポート22を使用します。ウェブの PHP 設定とは別に、CLI
 SQLiteからの移行時は [切り替え・復旧手順](../docs/mysql.md) も確認してください。コードだけ戻す場合は SSH で次を行います（パスは実環境に合わせて変更）。
 
 ```sh
-PRIVATE=/home/ACCOUNT/trail-card-private
+PRIVATE=/home/ACCOUNT/www-priv/card
 PUBLIC=/home/ACCOUNT/www/card
 BACKUP=$(cat "$PRIVATE/.deploy-pending")
 # まず BACKUP が今回のバックアップ先であることを確認する
@@ -64,3 +64,16 @@ cp -p "$BACKUP/private/schema.sql" "$PRIVATE/schema.sql"
 
 公開ファイルは SFTP などで `BACKUP/public/` の内容を `PUBLIC/` に戻し、ディレクトリー755・ファイル644に設定してください。**.htaccess は最後に戻して**公開を再開します。復旧確認後に `.deploy-pending` を削除します。
 DB 復元はコードの巻き戻しとは別作業です。DB を戻すとバックアップ後の記録を失うため、自動復元はしません。将来、破壊的なスキーマ変更を追加する場合は別途復旧計画を用意してください。
+
+
+## 既存の非公開ディレクトリーを www-priv 配下へ移す
+
+非公開側の配置先は `/home/gourd/www-priv/card`、公開側は `/home/gourd/www/card` とします。
+
+1. 利用者の更新とデプロイを止め、既存のバックアップ手順でDB・画像・設定を保存します。
+2. 公開側の `.htaccess` を退避し、一時的にメンテナンス応答へ切り替えます。処理中のリクエストが終わってから移動します。
+3. `/home/gourd/www-priv` を作成し、権限を700に設定します。旧 `/home/gourd/trail-card-private` を、未作成の `/home/gourd/www-priv/card` へディレクトリーごと移動します。設定・data・画像・セッション・バックアップも含めます。
+4. 移動後の `config.php` を確認します。`data_dir` が `__DIR__ . '/data'` ならそのまま使用できます。旧配置先を絶対パスで指定している場合は新しいパスへ変更します。cron等に登録した旧パスも更新します。
+5. 公開側 `index.php` の `$private` を `'/home/gourd/www-priv/card'` に変更します。
+6. GitHub Actionsの変数 `SAKURA_PRIVATE_DIR` を `/home/gourd/www-priv/card` に更新します。以降のデプロイはこの値を使って `index.php` の参照先を生成します。
+7. 設定とファイルの権限を確認し、退避した `.htaccess` を戻して、名刺・名刺帳・画像の表示と保存を確認します。

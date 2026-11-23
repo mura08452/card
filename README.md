@@ -35,8 +35,8 @@ PHP 8.2 以上を対象（PHP 8.3 CLIで検証）。フレームワーク・Comp
 1. PHP 8.2以上を選択。`pdo_mysql`、`curl`、`fileinfo` が必要です。Google認証には `openssl` も必要です。
 2. 既存の `over.rulez.jp` のWeb公開フォルダー内に `card` フォルダーを作成します。既存サイトのWeb公開フォルダー設定は変更しません。さくらの共有SSLでHTTPSが有効であることを確認します。
 3. 配布物の `public/` の**中身**（`.htaccess`含む）を作成した **`card/` フォルダー内**へアップロード。
-4. `private/` は `/home/ACCOUNT/trail-card-private` へアップロード。**www の中には置かないでください。**
-5. 公開側 `index.php` の `$private` を `/home/ACCOUNT/trail-card-private` に変更。
+4. `private/` は `/home/ACCOUNT/www-priv/card` へアップロード。**www の中には置かないでください。**
+5. 公開側 `index.php` の `$private` を `/home/ACCOUNT/www-priv/card` に変更。
 6. `private/config.example.php` を `private/config.php` にコピーして設定。
 
 この版の設置先は **`https://over.rulez.jp/card/`** です。`over.rulez.jp` のWeb公開フォルダーが `/home/ACCOUNT/www` の場合、配置先は `/home/ACCOUNT/www/card` です。公開フォルダーが別の場所なら、その中に `card` を作成してください。ルートの `index.php` や `.htaccess` は上書きせず、配布物の `.htaccess` は `card/` 内だけに配置します。ルート側に既存のrewrite設定がある場合、実サーバーで `/card/` が既存アプリへ転送されないことを確認してください。
@@ -56,9 +56,9 @@ php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'
 生成した64桁の値を `identity_key` に設定。このキーを変更すると同じ外部アカウントを識別できなくなるため、DBと一緒に厳重に保管します。キーやClient Secretをチャットへ貼らないでください。
 
 ```sh
-chmod 700 /home/ACCOUNT/trail-card-private
-chmod 600 /home/ACCOUNT/trail-card-private/config.php
-php /home/ACCOUNT/trail-card-private/bin/init.php
+chmod 700 /home/ACCOUNT/www-priv/card
+chmod 600 /home/ACCOUNT/www-priv/card/config.php
+php /home/ACCOUNT/www-priv/card/bin/init.php
 ```
 
 初期化はCLI専用です。SSHが使えないプランでは、契約環境に応じた初期化手順を別途用意してください。ブラウザから実行できる初期化ページは置きません。
@@ -102,7 +102,7 @@ Google認証の具体的な設定手順は [docs/google-auth.md](docs/google-aut
 ## 5. バックアップ / 復旧
 
 ```sh
-php /home/ACCOUNT/trail-card-private/bin/backup.php
+php /home/ACCOUNT/www-priv/card/bin/backup.php
 ```
 
 非公開 `data/backups/日時-乱数/` に、MySQLの一貫したSQLダンプ、DBから参照中の画像、設定を保存します。画像は更新時に別ファイルとして作成し、現在は自動削除しません。バックアップには秘密情報が含まれます。必要に応じてcron登録し、暗号化した別の場所にも保管してください。世代削除は自動化していません。

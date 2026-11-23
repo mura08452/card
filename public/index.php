@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-// 設置時、private フォルダーの絶対パスへ変更してください。
+// 本番設置時は /home/ACCOUNT/www-priv/card を指定。デプロイ時は自動設定。
 $private = dirname(__DIR__).'/private';
 require $private.'/src/bootstrap.php';
 securityHeaders();

@@ -22,7 +22,7 @@ Data Access（データアクセス）は `openid` のみを使用します。�
 
 ## 2. サーバーの設定に追記
 
-既存の `/home/gourd/trail-card-private/config.php` の `providers.google` だけを編集します。
+既存の `/home/gourd/www-priv/card/config.php` の `providers.google` だけを編集します。
 
 ```php
 'providers' => [

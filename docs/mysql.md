@@ -1,7 +1,7 @@
 # さくらでSQLiteからMySQLへ切り替える
 
 1. さくらのサーバーコントロールパネルで名刺アプリ専用の**空のMySQLデータベース**を作成し、DBサーバー名、データベース名、ユーザー名を確認します。
-2. サーバー上の `/home/gourd/trail-card-private/config.php` の戻り値の配列に次を追加します。接続情報はこの非公開ファイルだけに設定します。既存の `identity_key`、`providers`、`data_dir` はそのまま使います。
+2. サーバー上の `/home/gourd/www-priv/card/config.php` の戻り値の配列に次を追加します。接続情報はこの非公開ファイルだけに設定します。既存の `identity_key`、`providers`、`data_dir` はそのまま使います。
 
 ```php
 'mysql' => [
@@ -18,7 +18,7 @@
 
 ## バックアップと復元
 
-`php /home/gourd/trail-card-private/bin/backup.php` は一貫した読み取りトランザクションで全テーブルを取得し、非公開の `data/backups/日時-乱数/` に `data.sql`、参照画像、設定を書き出します。`.partial` は未完了です。
+`php /home/gourd/www-priv/card/bin/backup.php` は一貫した読み取りトランザクションで全テーブルを取得し、非公開の `data/backups/日時-乱数/` に `data.sql`、参照画像、設定を書き出します。`.partial` は未完了です。
 
 復元時はアクセスを止め、別途作った空の専用DBに以下を実行します。パスワードはプロンプトで入力します。
 
